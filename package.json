@@ -1,0 +1,19 @@
+{
+  "name": "rule34-client",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "proxy": "python3 proxy.py",
+    "start": "./start.sh",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@material/web": "^1.0.0"
+  },
+  "devDependencies": {
+    "vite": "^4.0.0"
+  }
+}

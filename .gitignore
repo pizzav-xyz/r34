@@ -1,0 +1,5 @@
+.env
+.proxy-port
+node_modules/
+dist/
+__pycache__/
