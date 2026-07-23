@@ -2,7 +2,18 @@
 set -e
 cd "$(dirname "$0")"
 
+if [ -z "$TMUX" ]; then
+  tmux new-session -d -s r34 "$0"
+  tmux attach -t r34 2>/dev/null || true
+  exit 0
+fi
+
 trap 'kill $PROXY_PID 2>/dev/null; rm -f .proxy-port' EXIT
+
+rm -f .proxy-port
+
+: "${R34_PROXY_PORT:=34000}"
+export R34_PROXY_PORT
 
 uv run proxy.py &
 PROXY_PID=$!

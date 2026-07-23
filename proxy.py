@@ -123,8 +123,8 @@ class DateResolver:
             if r.status_code == 200:
                 data = r.json()
                 return data if isinstance(data, list) else []
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"date resolver fetch failed: {e}", flush=True)
         return []
 
 
@@ -143,10 +143,50 @@ def _rate_wait():
 
 class ProxyHandler(BaseHTTPRequestHandler):
     def do_GET(self):
-        global _last_request
         _rate_wait()
-
         parsed = urlparse(self.path)
+
+        if parsed.path == '/video':
+            self._handle_video_proxy(parsed)
+        else:
+            self._handle_api_proxy(parsed)
+
+    def _send_error(self, status, message):
+        self.send_response(status)
+        self.send_header("Content-Type", "text/plain")
+        self.end_headers()
+        self.wfile.write(message.encode())
+
+    def _handle_video_proxy(self, parsed):
+        params = parse_qs(parsed.query)
+        target_url = params.get('url', [''])[0]
+        if not target_url:
+            self._send_error(400, "missing url param")
+            return
+
+        # SSRF protection: only allow rule34.xxx domains
+        try:
+            parsed_url = urlparse(target_url)
+            hostname = parsed_url.hostname or ''
+            if not hostname.endswith('rule34.xxx'):
+                self._send_error(403, "forbidden: only rule34.xxx domains allowed")
+                return
+        except Exception:
+            self._send_error(400, "invalid url")
+            return
+
+        try:
+            r = cffi_requests.get(target_url, impersonate="chrome", timeout=30)
+            self.send_response(r.status_code)
+            self.send_header("Content-Type", r.headers.get("content-type", "video/mp4"))
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Content-Length", str(len(r.content)))
+            self.end_headers()
+            self.wfile.write(r.content)
+        except Exception as e:
+            self._send_error(502, "failed to fetch video")
+
+    def _handle_api_proxy(self, parsed):
         params = parse_qs(parsed.query)
 
         raw_tags = params.get('tags', [''])[0]
@@ -162,8 +202,8 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 try:
                     _date_resolver.calibrate([days])
                     threshold = _date_resolver.resolve(days)
-                except Exception:
-                    pass
+                except Exception as e:
+                    print(f"date resolution failed for {days}d: {e}", flush=True)
 
             if threshold is not None:
                 cleaned_tags = f"id:>{threshold} {cleaned_tags}".strip()
@@ -179,30 +219,30 @@ class ProxyHandler(BaseHTTPRequestHandler):
 
         try:
             r = cffi_requests.get(target, impersonate="chrome", timeout=15)
-
             self.send_response(r.status_code)
             self.send_header("Content-Type", r.headers.get("content-type", "text/html"))
             self.send_header("Access-Control-Allow-Origin", "*")
             self.end_headers()
             self.wfile.write(r.content)
         except Exception as e:
-            self.send_response(502)
-            self.send_header("Content-Type", "text/plain")
-            self.end_headers()
-            self.wfile.write(str(e).encode())
+            self._send_error(502, "failed to reach upstream API")
 
     def log_message(self, fmt, *args):
         pass
 
 
-def find_free_port():
+def find_free_port(preferred=0):
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("127.0.0.1", 0))
+        try:
+            s.bind(("127.0.0.1", preferred))
+        except OSError:
+            s.bind(("127.0.0.1", 0))
         return s.getsockname()[1]
 
 
 def main():
-    port = find_free_port()
+    preferred = int(os.environ.get("R34_PROXY_PORT", "0"))
+    port = find_free_port(preferred)
     server = HTTPServer(("127.0.0.1", port), ProxyHandler)
     with open(PORT_FILE, "w") as f:
         f.write(str(port))
